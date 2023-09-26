@@ -45,7 +45,7 @@ def set_tokenizer_params(tokenizer: LlamaTokenizer):
 def byte2mb(x):
     return int(x / 2**20)
 
-def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_scheduler, gradient_accumulation_steps, train_config, fsdp_config=None, local_rank=None, rank=None):
+def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_scheduler, gradient_accumulation_steps, train_config, fsdp_config=None, local_rank=None, rank=None, tracker=None):
     """
     Trains the model on the given dataloader
     
@@ -109,7 +109,11 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                         optimizer.step()
                         optimizer.zero_grad()
                         pbar.update(step//gradient_accumulation_steps)
-                
+                # Track parameters in run
+                if tracker is not None:
+                    tracker.track(loss , name='loss', context={'subset':'train'})
+                    tracker.track(total_loss , name='total_loss', context={'subset':'train'})
+
                 pbar.set_description(f"Training Epoch: {epoch}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
                 
         epoch_end_time = time.perf_counter()-epoch_start_time
@@ -138,6 +142,11 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
             print(f"Peak active CUDA memory was {memtrace.peak_active_gb} GB")
             print(f"Cuda Malloc retires : {memtrace.cuda_malloc_retires}")
             print(f"CPU Total Peak Memory consumed during the train (max): {memtrace.cpu_peaked + memtrace.cpu_begin} GB")
+
+        if tracker is not None:
+            tracker.track(epoch_end_time , name='epoch_times', context={'subset':'train'})
+            tracker.track(train_epoch_loss , name='train_loss', context={'subset':'train'})
+            tracker.track(train_perplexity , name='train_perplexity', context={'subset':'train'})
         
         # Update the learning rate as needed
         lr_scheduler.step()
@@ -200,8 +209,13 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
         if train_config.enable_fsdp:
             if rank==0:
                 print(f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epcoh time {epoch_end_time}s")
-        else:
-            print(f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epcoh time {epoch_end_time}s")
+            else:
+                print(f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epcoh time {epoch_end_time}s")
+
+        if tracker is not None:
+            tracker.track(best_val_loss , name='best_val_loss', context={'subset':'val'})
+            tracker.track(eval_epoch_loss , name='eval_epoch_loss', context={'subset':'val'})
+
     avg_epoch_time = sum(epoch_times)/ len(epoch_times) 
     avg_checkpoint_time = sum(checkpoint_times)/ len(checkpoint_times)   
     avg_train_prep = sum(train_prep)/len(train_prep)
@@ -221,7 +235,12 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
     #saving the training params including fsdp setting for reference.
     if train_config.enable_fsdp and not train_config.use_peft:
         save_train_params(train_config, fsdp_config, rank)
-        
+
+    if tracker is not None:
+        tracker.track(avg_epoch_time , name='avg_epoch_time', context={'subset':'experiment'})
+        tracker.track(avg_checkpoint_time , name='avg_checkpoint_time', context={'subset':'experiment'})
+        tracker.track(avg_train_loss , name='avg_train_loss', context={'subset':'experiment'})
+ 
     return results
 
 def evaluation(model,train_config, eval_dataloader, local_rank, tokenizer):

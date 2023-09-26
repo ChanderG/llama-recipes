@@ -3,6 +3,9 @@
 
 import os
 
+from aim import Run
+import dataclasses
+
 import fire
 import torch
 import torch.distributed as dist
@@ -64,6 +67,51 @@ def main(**kwargs):
         torch.cuda.set_device(local_rank)
         clear_gpu_cache(local_rank)
         setup_environ_flags(rank)
+
+    # Initialize a new run
+    aim_server = os.environ.get('AIM_STACK_SERVER')
+    if aim_server:
+        aim_run = Run(repo='aim://'+aim_server+'/')
+    else:
+        aim_run = Run()
+
+    aim_run['train_config'] = {
+        "model_name" : train_config.model_name,
+        "enable_fsdp" : train_config.enable_fsdp,
+        "low_cpu_fsdp": train_config.low_cpu_fsdp,
+        "run_validation": train_config.run_validation,
+        "batch_size_training": train_config.batch_size_training,
+        "gradient_accumulation_steps": train_config.gradient_accumulation_steps,
+        "num_epochs": train_config.num_epochs,
+        "num_workers_dataloader": train_config.num_workers_dataloader,
+        "lr": train_config.lr,
+        "weight_decay": train_config.weight_decay,
+        "gamma": train_config.gamma,
+        "seed": train_config.seed,
+        "use_fp16": train_config.use_fp16,
+        "mixed_precision": train_config.mixed_precision,
+        "dataset": train_config.dataset,
+        "peft_method": train_config.peft_method,
+        "use_peft": train_config.use_peft,
+        "output_dir": train_config.output_dir,
+        "freeze_layers": train_config.freeze_layers,
+        "num_freeze_layers": train_config.num_freeze_layers,
+        "quantization": train_config.quantization,
+        "one_gpu": train_config.one_gpu,
+        "save_model": train_config.save_model,
+        "dist_checkpoint_root_folder": train_config.dist_checkpoint_root_folder,
+        "dist_checkpoint_folder": train_config.dist_checkpoint_folder,
+        "save_optimizer": train_config.save_optimizer,
+        "use_fast_kernels": train_config.use_fast_kernels
+    }
+
+    aim_run['fsdp_config'] = {
+            "mixed_precision" : fsdp_config.mixed_precision,
+            "use_fp16" : fsdp_config.use_fp16,
+            "fsdp_activation_checkpointing": fsdp_config.fsdp_activation_checkpointing,
+            "pure_bf16" : fsdp_config.pure_bf16,
+            "optimizer" : fsdp_config.optimizer
+        }
 
     # Load the pre-trained model and setup its configuration
     if train_config.enable_fsdp and train_config.low_cpu_fsdp:
@@ -242,6 +290,7 @@ def main(**kwargs):
         fsdp_config if train_config.enable_fsdp else None,
         local_rank if train_config.enable_fsdp else None,
         rank if train_config.enable_fsdp else None,
+        tracker=aim_run,
     )
     if not train_config.enable_fsdp or rank==0:
         [print(f'Key: {k}, Value: {v}') for k, v in results.items()]
