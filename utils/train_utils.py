@@ -113,6 +113,11 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                 if tracker is not None:
                     tracker.track(loss , name='loss', context={'subset':'train'})
                     tracker.track(total_loss , name='total_loss', context={'subset':'train'})
+                    tracker.track(memtrace.peak, name="Max CUDA Mem Allocated(GB)", stage='train')
+                    tracker.track(memtrace.max_reserved, "Max CUDA Mem Reserved(GB)", stage='train')
+                    tracker.track(memtrace.peak_active_gb, "Peak active CUDA Mem(GB)", stage='train')
+                    tracker.track(memtrace.cuda_malloc_retires, "Cuda Malloc retires", stage='train')
+                    tracker.track(memtrace.cpu_peaked + memtrace.cpu_begin, "CPU Total Peak Mem Max(GB)", stage='train')
 
                 pbar.set_description(f"Training Epoch: {epoch}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
                 
