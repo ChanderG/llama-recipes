@@ -212,6 +212,10 @@ def main(**kwargs):
 
     dataset_config = generate_dataset_config(train_config, kwargs)
 
+    aim_run['dataset_config'] = {
+        "sequence_length" : dataset_config.input_length
+    }
+
      # Load and preprocess the dataset for training and validation
     dataset_train = get_preprocessed_dataset(
         tokenizer,
