@@ -19,6 +19,12 @@ DATASET_PREPROC = {
     "samsum_dataset": get_samsum_dataset,
 }
 
+def get_dataset_seq_length(dataset_name, dataset_config):
+    if (dataset_name == "alpaca_dataset"):
+        # Why 224? See the hardcode above.
+        return 224
+    else:
+        return dataset_config.input_length
 
 def get_preprocessed_dataset(
     tokenizer, dataset_config, split: str = "train"
@@ -32,7 +38,7 @@ def get_preprocessed_dataset(
             if split == "train"
             else dataset_config.test_split
         )
-    
+
     return DATASET_PREPROC[dataset_config.dataset](
         dataset_config,
         tokenizer,

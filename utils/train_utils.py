@@ -45,7 +45,7 @@ def set_tokenizer_params(tokenizer: LlamaTokenizer):
 def byte2mb(x):
     return int(x / 2**20)
 
-def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_scheduler, gradient_accumulation_steps, train_config, fsdp_config=None, local_rank=None, rank=None, tracker=None):
+def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_scheduler, gradient_accumulation_steps, train_config, fsdp_config=None, local_rank=None, rank=None, tracker=None, seq_length=None):
     """
     Trains the model on the given dataloader
     
@@ -86,11 +86,12 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
             total_length = len(train_dataloader)//gradient_accumulation_steps
             pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch}", total=total_length)
             for step, batch in enumerate(train_dataloader):
+                step_start_time = time.perf_counter()
                 for key in batch.keys():
                     if train_config.enable_fsdp:
                         batch[key] = batch[key].to(local_rank)
                     else:
-                        batch[key] = batch[key].to('cuda:0')              
+                        batch[key] = batch[key].to('cuda:0')
                 loss = model(**batch).loss
                 loss = loss / gradient_accumulation_steps
                 total_loss += loss.detach().float()
@@ -109,6 +110,11 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                         optimizer.step()
                         optimizer.zero_grad()
                         pbar.update(step//gradient_accumulation_steps)
+                step_time = time.perf_counter() - step_start_time
+                if seq_length is not None:
+                    # batch_size * seq_len / secs_per_iter
+                    tokens_per_second = (train_config.batch_size_training * seq_length) / step_time
+                    tracker.track(tokens_per_second, name='tokens_per_second', context={'subset':'train'})
                 # Track parameters in run
                 if tracker is not None:
                     tracker.track(loss , name='loss', context={'subset':'train'})

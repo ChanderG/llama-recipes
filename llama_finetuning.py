@@ -35,7 +35,10 @@ from utils.config_utils import (
     generate_peft_config,
     generate_dataset_config,
 )
-from utils.dataset_utils import get_preprocessed_dataset
+from utils.dataset_utils import (
+    get_preprocessed_dataset,
+    get_dataset_seq_length
+)
 
 from utils.train_utils import (
     train,
@@ -46,7 +49,6 @@ from utils.train_utils import (
     print_model_size,
     get_policies
 )
-
 
 def main(**kwargs):
     # Update the configuration for the training and sharding process
@@ -283,6 +285,8 @@ def main(**kwargs):
         )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
 
+    seq_length = get_dataset_seq_length(train_config.dataset, dataset_config)
+
     # Start the training process
     results = train(
         model,
@@ -297,6 +301,7 @@ def main(**kwargs):
         local_rank if train_config.enable_fsdp else None,
         rank if train_config.enable_fsdp else None,
         tracker=aim_run,
+        seq_length=seq_length,
     )
     if not train_config.enable_fsdp or rank==0:
         [print(f'Key: {k}, Value: {v}') for k, v in results.items()]
