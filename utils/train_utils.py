@@ -70,6 +70,10 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
         scaler = torch.cuda.amp.GradScaler() 
     if train_config.enable_fsdp:
         world_size = int(os.environ["WORLD_SIZE"]) 
+
+    if tracker is not None and seq_length is not None:
+        tracker.track(seq_length, name='seq_length', context={'subset':'experiment'})
+
     train_prep = []
     train_loss = []
     val_prep = []
@@ -111,14 +115,15 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
                         optimizer.zero_grad()
                         pbar.update(step//gradient_accumulation_steps)
                 step_time = time.perf_counter() - step_start_time
-                if seq_length is not None:
-                    # batch_size * seq_len / secs_per_iter
-                    tokens_per_second = (train_config.batch_size_training * seq_length) / step_time
-                    tracker.track(tokens_per_second, name='tokens_per_second', context={'subset':'train'})
                 # Track parameters in run
                 if tracker is not None:
                     tracker.track(loss , name='loss', context={'subset':'train'})
                     tracker.track(total_loss , name='total_loss', context={'subset':'train'})
+                    if seq_length is not None:
+                        # batch_size * seq_len / secs_per_iter
+                        tokens_per_second = (train_config.batch_size_training * seq_length) / step_time
+                        tracker.track(step_time, name='seconds_per_iteration', context={'subset':'train'})
+                        tracker.track(tokens_per_second, name='tokens_per_second', context={'subset':'train'})
                 pbar.set_description(f"Training Epoch: {epoch}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
                 
         epoch_end_time = time.perf_counter()-epoch_start_time
@@ -133,7 +138,18 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
         
         train_prep.append(train_perplexity)
         train_loss.append(train_epoch_loss)
-        
+
+        if tracker is not None:
+            tracker.track(epoch_end_time , name='epoch_times', context={'subset':'train'})
+            tracker.track(train_epoch_loss , name='train_loss', context={'subset':'train'})
+            tracker.track(train_perplexity , name='train_perplexity', context={'subset':'train'})
+
+            tracker.track(memtrace.peak, name="Max CUDA Mem Allocated(GB)", context={'subset':'train'})
+            tracker.track(memtrace.max_reserved, "Max CUDA Mem Reserved(GB)", context={'subset':'train'})
+            tracker.track(memtrace.peak_active_gb, "Peak active CUDA Mem(GB)", context={'subset':'train'})
+            tracker.track(memtrace.cuda_malloc_retires, "Cuda Malloc retires", context={'subset':'train'})
+            tracker.track(memtrace.cpu_peaked + memtrace.cpu_begin, "CPU Total Peak Mem Max(GB)", context={'subset':'train'})
+
         if train_config.enable_fsdp:
             if rank==0:
                 print(f"Max CUDA memory allocated was {memtrace.peak} GB")
@@ -147,17 +163,6 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
             print(f"Peak active CUDA memory was {memtrace.peak_active_gb} GB")
             print(f"Cuda Malloc retires : {memtrace.cuda_malloc_retires}")
             print(f"CPU Total Peak Memory consumed during the train (max): {memtrace.cpu_peaked + memtrace.cpu_begin} GB")
-
-        if tracker is not None:
-            tracker.track(epoch_end_time , name='epoch_times', context={'subset':'train'})
-            tracker.track(train_epoch_loss , name='train_loss', context={'subset':'train'})
-            tracker.track(train_perplexity , name='train_perplexity', context={'subset':'train'})
-
-            tracker.track(memtrace.peak, name="Max CUDA Mem Allocated(GB)", context={'subset':'train'})
-            tracker.track(memtrace.max_reserved, "Max CUDA Mem Reserved(GB)", context={'subset':'train'})
-            tracker.track(memtrace.peak_active_gb, "Peak active CUDA Mem(GB)", context={'subset':'train'})
-            tracker.track(memtrace.cuda_malloc_retires, "Cuda Malloc retires", context={'subset':'train'})
-            tracker.track(memtrace.cpu_peaked + memtrace.cpu_begin, "CPU Total Peak Mem Max(GB)", context={'subset':'train'})
 
         # Update the learning rate as needed
         lr_scheduler.step()
@@ -242,15 +247,21 @@ def train(model, train_dataloader, eval_dataloader, tokenizer, optimizer, lr_sch
         results['avg_eval_loss'] = avg_eval_loss
     results["avg_epoch_time"] = avg_epoch_time
     results["avg_checkpoint_time"] = avg_checkpoint_time
-    
+
+    if tracker is not None:
+        tracker.track(avg_train_loss , name='avg_train_loss', context={'subset':'experiment'})
+        tracker.track(avg_train_prep, name='avg_train_prep', context={'subset':'experiment'})
+
+        if train_config.run_validation:
+            tracker.track(avg_eval_prep , name='avg_eval_prep', context={'subset':'experiment'})
+            tracker.track(avg_eval_loss, name='avg_eval_loss', context={'subset':'experiment'})
+
+        tracker.track(avg_epoch_time , name='avg_epoch_time', context={'subset':'experiment'})
+        tracker.track(avg_checkpoint_time , name='avg_checkpoint_time', context={'subset':'experiment'})
+
     #saving the training params including fsdp setting for reference.
     if train_config.enable_fsdp and not train_config.use_peft:
         save_train_params(train_config, fsdp_config, rank)
-
-    if tracker is not None:
-        tracker.track(avg_epoch_time , name='avg_epoch_time', context={'subset':'experiment'})
-        tracker.track(avg_checkpoint_time , name='avg_checkpoint_time', context={'subset':'experiment'})
-        tracker.track(avg_train_loss , name='avg_train_loss', context={'subset':'experiment'})
  
     return results
 
